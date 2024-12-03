@@ -12,26 +12,27 @@ type Loggers struct {
 }
 
 func SetLoggers() *Loggers {
-	buildLlogFiles()
-	err := os.MkdirAll("./logs")
-	CheckError(err)
-	serverLogFile,err := os.OpenFile("server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-	CheckError(err)
-	chatLogFile,err := os.OpenFile("chat.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-	logger := new(Loggers) 
-	logger.LogInfo,err  := log.New(serverLogFile, os.O_CREATE, 0o666)
-	// logger.LogError :=
-	// logger.LogChat :=
-	return nil
+	serverLogFile, chatLogFile := buildLogFiles()
+	log.SetFlags(log.Ldate | log.Ltime)
+	loggers := new(Loggers)
+	loggers.LogInfo = log.New(serverLogFile, "Info: ", log.Ldate|log.Ltime)
+	loggers.LogError = log.New(serverLogFile, "Error: ", log.Ldate|log.Ltime)
+	loggers.LogChat = log.New(chatLogFile, "", log.Ldate|log.Ltime)
+	return loggers
 }
 
-
-buildLogFiles() {
-
+func buildLogFiles() (serverLogFile *os.File, chatLogFile *os.File) {
+	dir := "logs/"
+	err := os.MkdirAll(dir, 0o777)
+	CheckError(err)
+	serverLogFile, err = os.OpenFile(dir+"server.log", os.O_CREATE|os.O_WRONLY, 0o666)
+	CheckError(err)
+	chatLogFile, err = os.OpenFile(dir+"chat.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
+	CheckError(err)
+	return serverLogFile, chatLogFile
 }
 
-
-func CheckError(err error){
+func CheckError(err error) {
 	if err != nil {
 		log.Fatal(err)
 	}
