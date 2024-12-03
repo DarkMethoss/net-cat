@@ -1,49 +1,28 @@
 package main
 
 import (
-	"fmt"
-	"io"
 	"log"
 	"net"
+
+	s "netcat/internal/server"
 )
 
 // type chatServer
 
 func main() {
-	listner, err := net.Listen("tcp", "localhost:8080")
+	server := s.NewTcpChatServer()
+	listener, err := net.Listen("tcp", "localhost:8080")
 	if err != nil {
-		log.Fatal(err)
-	} else {
-		fmt.Println("listening to port: 8080")
+		server.LogError.Println("err")
+		log.Fatal("")
 	}
-
-	conn, err := listner.Accept()
-	if err != nil {
-		log.Print(err)
-		return
+	defer listener.Close()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			server.LogError.Println(err)
+			continue
+		}
+		go s.HandleConnection(conn)
 	}
-	defer conn.Close()
-	_, err = conn.Write([]byte("Welcome to the chat."))
-	if err != nil {
-		fmt.Println("Error writing to the connection: ", err)
-	}
-
-	proxyConn(listner.Addr().String(), conn.LocalAddr().String())
-}
-
-func proxyConn(source, destination string) error {
-	connSource, err := net.Dial("tcp", source)
-	if err != nil {
-		return err
-	}
-	defer connSource.Close()
-
-	connDestination, err := net.Dial("tcp", destination)
-	if err != nil {
-		return err
-	}
-	defer connDestination.Close()
-	go func() { _, _ = io.Copy(connSource, connDestination) }()
-	_, err = io.Copy(connDestination, connSource)
-	return err
 }
