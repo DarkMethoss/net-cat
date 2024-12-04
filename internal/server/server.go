@@ -9,6 +9,7 @@ import (
 )
 
 type TcpChatServer struct {
+	Stopped  bool
 	Listener net.Listener
 	clients  map[net.Conn]string
 	*logger.Loggers
@@ -26,7 +27,6 @@ func NewTcpChatServer(port string) (*TcpChatServer, error) {
 		Loggers:  logger.SetLoggers(),
 	}, nil
 }
-
 func (tcs *TcpChatServer) HandleConnection(conn net.Conn) {
 	defer conn.Close()
 	fmt.Println("New connection from", conn.RemoteAddr())
@@ -35,8 +35,11 @@ func (tcs *TcpChatServer) HandleConnection(conn net.Conn) {
 
 	// for conn, name := range tcs.users {
 
+	conn.Write([]byte(`[`))
 	if _, err := io.Copy(conn, conn); err != nil {
 		tcs.LogError.Println(err)
 	}
+	conn.Write([]byte(`]`))
+
 	// }
 }

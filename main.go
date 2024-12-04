@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	s "netcat/internal/server"
 )
@@ -11,29 +12,11 @@ import (
 // ! strconv not allowed
 // ! check port range & port 0 not allowed
 
-type Signal string
 
-func (sig Signal) String() string {
-	switch sig {
-	case "0x2":
-		return "SIGINT"
-	default:
-		return "UNKNOWN_SIGNAL"
-	}
-}
 
-func (sig Signal) Signal() {
-	// Marker method
-}
-
-const (
-	SIGINT = Signal("0x2") // Custom SIGINT representation
-)
 
 func main() {
 	port := ""
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Signal(SIGINT))
 	switch len(os.Args[1:]) {
 	case 0:
 		port = "8989"
@@ -45,30 +28,37 @@ func main() {
 
 	server, err := s.NewTcpChatServer(port)
 	if err != nil {
+		server.LogError.Println(err)
+	} else {
+		server.LogInfo.Println("")
 	}
 
-	stop := make(chan struct{})
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
+	signal.Notify(sigChan, syscall.SIGINT)
 
 	defer func() {
+		server.Stopped = true
 		server.LogInfo.Println("Shutting down server...")
 		server.Listener.Close()
-		close(stop)
 		server.LogInfo.Println("Server stopped gracefully.")
 	}()
 
 	// Creation of a socket
 	go func() {
 		for {
+			if server.Stopped {
+				return
+			}
 			conn, err := server.Listener.Accept()
 			if err != nil {
-				server.LogError.Println(err)
+				// server.LogError.Println(err)
 				continue
 			}
 			go server.HandleConnection(conn)
 		}
 	}()
-	
-	<-sigChan
+
+	fmt.Println("Main function starts. Waiting for signal...")
+	<-sigChan // Block here until signal is received
+	fmt.Println("Signal received. Exiting.")
 }
