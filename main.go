@@ -2,9 +2,8 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"net"
 	"os"
+	"os/signal"
 
 	s "netcat/internal/server"
 )
@@ -12,9 +11,29 @@ import (
 // ! strconv not allowed
 // ! check port range & port 0 not allowed
 
+type Signal string
+
+func (sig Signal) String() string {
+	switch sig {
+	case "0x2":
+		return "SIGINT"
+	default:
+		return "UNKNOWN_SIGNAL"
+	}
+}
+
+func (sig Signal) Signal() {
+	// Marker method
+}
+
+const (
+	SIGINT = Signal("0x2") // Custom SIGINT representation
+)
+
 func main() {
 	port := ""
-
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Signal(SIGINT))
 	switch len(os.Args[1:]) {
 	case 0:
 		port = "8989"
@@ -24,27 +43,25 @@ func main() {
 		fmt.Println("[USAGE]: ./TCPChat $port")
 	}
 
-	server := s.StartTcpChatServer()
-	listener, err := net.Listen("tcp", "localhost:"+port)
-
+	server, err := s.NewTcpChatServer(port)
 	if err != nil {
-		server.LogError.Println("err")
-		log.Fatal("")
-	} else {
-		server.LogInfo.Println("Server Listening to port " + port)
 	}
 
 	stop := make(chan struct{})
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+
 	defer func() {
-		fmt.Println("Server has been stoped")
-		server.LogInfo.Println("Server Stoped")
-		listener.Close()
+		server.LogInfo.Println("Shutting down server...")
+		server.Listener.Close()
+		close(stop)
+		server.LogInfo.Println("Server stopped gracefully.")
 	}()
 
 	// Creation of a socket
 	go func() {
 		for {
-			conn, err := listener.Accept()
+			conn, err := server.Listener.Accept()
 			if err != nil {
 				server.LogError.Println(err)
 				continue
@@ -52,5 +69,6 @@ func main() {
 			go server.HandleConnection(conn)
 		}
 	}()
-	<-stop
+	
+	<-sigChan
 }

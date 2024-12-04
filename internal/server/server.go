@@ -9,16 +9,22 @@ import (
 )
 
 type TcpChatServer struct {
-	users map[net.Conn]string
+	Listener net.Listener
+	clients  map[net.Conn]string
 	*logger.Loggers
 }
 
-func StartTcpChatServer() *TcpChatServer {
-	server := &TcpChatServer{
-		users:   map[net.Conn]string{},
-		Loggers: logger.SetLoggers(),
+func NewTcpChatServer(port string) (*TcpChatServer, error) {
+	listener, err := net.Listen("tcp", "localhost:"+port)
+	if err != nil {
+		return nil, fmt.Errorf("failed start server at localhost:%w", err)
 	}
-	return server
+
+	return &TcpChatServer{
+		Listener: listener,
+		clients:  map[net.Conn]string{},
+		Loggers:  logger.SetLoggers(),
+	}, nil
 }
 
 func (tcs *TcpChatServer) HandleConnection(conn net.Conn) {
@@ -34,5 +40,3 @@ func (tcs *TcpChatServer) HandleConnection(conn net.Conn) {
 	}
 	// }
 }
-
-
