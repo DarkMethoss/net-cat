@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
+	"time"
 
 	"netcat/internal/logger"
 )
@@ -34,12 +36,14 @@ func (s *Server) Start(port string) {
 	var err error
 	s.Listener, err = net.Listen("tcp", "localhost:"+port)
 	if err != nil {
+		s.LogError.Println(err)
 		fmt.Println(err)
 		return
 	}
 
 	for {
 		if s.Stopped {
+			close(s.Message)
 			return // Exit the loop if the server is stopped
 		}
 		conn, err := s.Listener.Accept()
@@ -51,46 +55,45 @@ func (s *Server) Start(port string) {
 			fmt.Println(err)
 			continue
 		}
-		go s.HandleConnection(conn)
 		go s.brodcast(conn)
+		go s.HandleConnection(conn)
 	}
 }
 
 func (s *Server) HandleConnection(conn net.Conn) {
-	defer func() {
-		conn.Write([]byte("Server Down"))
-		s.mu.Lock()
-		delete(s.Clients, conn)
-		s.mu.Unlock()
-		conn.Close()
-	}()
+	defer s.RemoveClient(conn)
 	fmt.Println("New connection from", conn.RemoteAddr())
 
 	conn.Write([]byte("[ENTER YOUR NAME]: "))
 	name, _ := bufio.NewReader(conn).ReadString('\n')
-
-	s.Clients[conn] = name
-	fmt.Println(s.Clients)
-
+	s.mu.Lock()
+	s.Clients[conn] = strings.TrimSpace(name)
+	s.mu.Unlock()
+	s.Message <- fmt.Sprintf("%s has joined the chat\n", s.Clients[conn])
+	fmt.Println(s.Clients[conn] + " joined the chat !!!")
 	for {
 		if s.Stopped {
-			s.Message <- fmt.Sprintln("Server Down !!")
-			s.mu.Lock()
-			delete(s.Clients, conn)
-			s.mu.Unlock()
+			s.Message <- fmt.Sprintf("%s has left the chat\n", s.Clients[conn])
 			return
 		}
 		message, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			s.mu.Lock()
-			delete(s.Clients, conn)
-			s.mu.Unlock()
+			fmt.Println(s.Clients[conn] + " left the chat !!!")
 			s.Message <- fmt.Sprintf("%s has left the chat\n", s.Clients[conn])
+			s.RemoveClient(conn)
 			return
 		}
-
-		s.Message <- fmt.Sprintf("%s: %s", s.Clients[conn], message)
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		sender := s.Clients[conn]
+		prefix := fmt.Sprintf("[%s][%s]:", timestamp, sender)
+		s.Message <- fmt.Sprintf("%s%s\n", prefix, message)
 	}
+}
+
+func (s *Server) RemoveClient(conn net.Conn) {
+	s.mu.Lock()
+	delete(s.Clients, conn)
+	s.mu.Unlock()
 }
 
 func (s *Server) Stop() {
@@ -112,14 +115,15 @@ func (s *Server) Stop() {
 	fmt.Println("Server has been stopped.")
 }
 
-
 func (s *Server) brodcast(conn net.Conn) {
-	for {
-		message := <-s.Message
+	for message := range s.Message {
+		s.mu.Lock()
 		for client := range s.Clients {
 			if client != conn {
 				client.Write([]byte(message))
 			}
 		}
+		s.mu.Unlock()
 	}
+	fmt.Println("Broadcast loop terminated.")
 }
