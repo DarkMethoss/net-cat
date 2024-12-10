@@ -9,6 +9,7 @@ import (
 	"netcat/internal/chat"
 	"netcat/internal/helpers"
 )
+
 // var logo = ""
 
 func main() {
@@ -18,9 +19,9 @@ func main() {
 	}
 	server := chat.NewServer()
 
-	server.Shutdown = make(chan os.Signal, 1)
-	signal.Notify(server.Shutdown, syscall.SIGINT)
+	stopped := make(chan os.Signal, 1)
+	signal.Notify(stopped, syscall.SIGINT)
 	go server.Start(port)
 	defer server.Stop()
-	<-server.Shutdown
+	<-stopped
 }
