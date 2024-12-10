@@ -38,10 +38,10 @@ func (s *Server) Start(port string) {
 	var err error
 	s.Listener, err = net.Listen("tcp", "localhost:"+port)
 	if err != nil {
-		s.Log("Info", err.Error())
+		s.LogError.Println("Listening Error", err.Error())
 		return
 	}
-	s.Log("Info", "Chat Server Started : server listening for connections on the port "+port)
+	s.LogInfo.Println("Chat Server Started : server listening for connections on the port " + port)
 
 	go s.brodcast()
 	for {
@@ -55,12 +55,12 @@ func (s *Server) Start(port string) {
 }
 
 func (s *Server) HandleConnection(conn net.Conn) {
-	s.Log("Info", "New connection from"+conn.RemoteAddr().String())
+	s.LogInfo.Println("New connection from" + conn.RemoteAddr().String())
 	userName, err := s.AddUser(conn)
 	if err != nil {
-		s.Log("Error", err.Error())
+		s.LogError.Println("Error", err.Error())
 	} else {
-		s.Log("Infor", userName+" has joined our chat...\n")
+		s.LogInfo.Println(userName + " has joined our chat...\n")
 		s.Broadcast <- BroadcastDetails{
 			Notification: "\n" + userName + " has joined our chat...\n",
 			User:         userName,
@@ -71,7 +71,7 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 	err = s.HandleMessage(conn, userName)
 	if err != nil {
-		s.Log("Infor", userName+" has left our chat...")
+		s.LogInfo.Println(userName + " has left our chat...")
 	}
 }
 
@@ -80,10 +80,9 @@ func (s *Server) HandleMessage(conn net.Conn, userName string) error {
 		message, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
 			fmt.Println("Error Reading message: ", err)
+			conn.Close()
 			s.Broadcast <- BroadcastDetails{
-				Message:      "",
 				Notification: "\n" + userName + " has left our chat...",
-				User:         userName,
 			}
 			return err
 		}
@@ -115,6 +114,7 @@ func (s *Server) Stop() {
 		user.Write([]byte("\nServer has been stopped.")) // Notify the user
 		user.Close()                                     // Close the connection
 	}
+	s.LogInfo.Println("Server has been stoped")
 	fmt.Println("Server has been stopped.")
 }
 
@@ -144,15 +144,20 @@ func (s *Server) AddUser(conn net.Conn) (string, error) {
 			return "", err
 		}
 		name = name[:len(name)-1]
-		fmt.Println([]byte(name))
 		if len(s.Users) < 10 {
+			err := helpers.ValidName(name)
+			if err != nil {
+				conn.Write([]byte(err.Error() + "\n"))
+				continue
+			}
 			if _, exists := s.Users[name]; !exists {
 				s.mu.Lock()
 				s.Users[name] = conn
 				s.mu.Unlock()
 				return name, nil
 			}
-			return "", errors.New("UserName Slready Exists")
+			conn.Write([]byte("UserName Already Exists"))
+			continue
 		} else {
 			conn.Write([]byte("Server Full"))
 			return "", errors.New("Server Full")
@@ -163,24 +168,19 @@ func (s *Server) AddUser(conn net.Conn) (string, error) {
 func (s *Server) brodcast() {
 	for brodcast := range s.Broadcast {
 		s.mu.Lock()
-		for user := range s.Users {
+		for user, conn := range s.Users {
 			if user != brodcast.User && brodcast.Notification == "" {
-				s.Users[user].Write([]byte("\n" + helpers.SetPrefix(brodcast.User)))
-				s.Users[user].Write([]byte(brodcast.Message))
+				conn.Write([]byte("\n" + helpers.SetPrefix(brodcast.User)))
+				conn.Write([]byte(brodcast.Message))
+				s.HistoryMessages = append(s.HistoryMessages, brodcast.Message)
 			} else if user != brodcast.User && brodcast.Notification != "" {
-				s.Users[user].Write([]byte(brodcast.Notification))
+				conn.Write([]byte(brodcast.Notification))
+				s.HistoryMessages = append(s.HistoryMessages, brodcast.Notification)
 			}
-			s.Users[user].Write([]byte(helpers.SetPrefix(user)))
+			if brodcast.User != "" {
+				conn.Write([]byte(helpers.SetPrefix(user)))
+			}
 		}
 		s.mu.Unlock()
-	}
-}
-
-func (s *Server) Log(logType string, logMessage string) {
-	switch logType {
-	case "Info":
-		s.LogInfo.Println(logMessage)
-	case "Error":
-		s.LogError.Println(logMessage)
 	}
 }
