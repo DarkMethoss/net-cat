@@ -1,7 +1,9 @@
 package helpers
 
 import (
+	"fmt"
 	"os"
+	"time"
 )
 
 func HandleArguments() (port string) {
@@ -14,4 +16,9 @@ func HandleArguments() (port string) {
 		port = ""
 	}
 	return
+}
+
+func SetPrefix(name string) string {
+	timestamp := time.Now().Format(time.DateTime)
+	return fmt.Sprintf("[%s][%s]:", timestamp, name)
 }
