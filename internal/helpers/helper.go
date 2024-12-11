@@ -39,3 +39,15 @@ func ValidName(name string) error {
 	}
 	return nil
 }
+
+func ValidMessage(message string) (string, error) {
+	if message == "" {
+		return "", nil
+	}
+	for _, char := range message {
+		if char < 32 || char > 126 {
+			return "", errors.New("message should only contain printable ascii characters")
+		}
+	}
+	return message, nil
+}

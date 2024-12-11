@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -11,16 +12,6 @@ import (
 	"netcat/internal/helpers"
 	"netcat/internal/logger"
 )
-
-type Server struct {
-	Listener        net.Listener
-	Users           Users
-	Broadcast       chan BroadcastDetails
-	HistoryMessages []string
-	Shutdown        bool
-	mu              sync.Mutex
-	*logger.Loggers
-}
 
 func NewServer() *Server {
 	return &Server{
@@ -35,19 +26,15 @@ func NewServer() *Server {
 
 func (s *Server) Start(port string) {
 	var err error
-	s.Listener, err = net.Listen("tcp", "localhost:"+port)
+	s.Listener, err = net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		s.LogError.Println("Listening Error", err.Error())
-		return
+		log.Fatal(err)
 	}
 	s.LogInfo.Println("Chat Server Started : server listening for connections on the port " + port)
-
+	fmt.Println("Chat Server Started : server listening for connections on " + s.Listener.Addr().String())
 	go s.brodcast()
-	for {
-		if s.Shutdown {
-			s.Listener.Close() // Stop accepting new connections
-			return
-		}
+	for !s.Shutdown {
 		conn, err := s.Listener.Accept()
 		if err != nil {
 			fmt.Println("here", err)
@@ -55,59 +42,31 @@ func (s *Server) Start(port string) {
 		}
 		go s.HandleConnection(conn)
 	}
+	s.Listener.Close()
 }
 
 func (s *Server) HandleConnection(conn net.Conn) {
+	if s.Shutdown {
+		return
+	}
 	s.LogInfo.Println("New connection from" + conn.RemoteAddr().String())
 	userName, err := s.AddUser(conn)
 	if err != nil {
-		s.LogError.Println("Error", err.Error())
-	} else {
-		s.LogInfo.Println(userName + " has joined our chat...")
-		s.Broadcast <- BroadcastDetails{
-			Notification: "\033[32m" + userName + " has joined our chat...\033[0m\n",
-			User:         userName,
-		}
+		s.LogError.Println("Error adding user:",)
+		return
+	}
+
+	// Broadcast user join message
+	s.LogInfo.Println(userName + " has joined our chat...")
+	s.Broadcast <- BroadcastDetails{
+		Message: "\033[32m" + userName + " has joined our chat...\033[0m\n",
+		User:    userName,
 	}
 
 	defer s.Removeuser(userName)
 
-	err = s.HandleMessages(conn, userName)
-	if err != nil {
-		s.LogInfo.Println("\033[31m" + userName + " has left our chat...\033[0m\n")
-	}
-}
-
-func (s *Server) HandleMessages(conn net.Conn, userName string) error {
-	for {
-		message, err := bufio.NewReader(conn).ReadString('\n')
-		if err != nil {
-			fmt.Println("Error Reading message: ", err)
-			conn.Close()
-			return err
-		}
-
-		if strings.TrimSpace(message) != "" {
-			s.Broadcast <- BroadcastDetails{
-				Message:      helpers.SetPrefix(userName) + message,
-				Notification: "",
-				User:         userName,
-			}
-		} else {
-			conn.Write([]byte("\033[F\033[2k\r"))
-			conn.Write([]byte(helpers.SetPrefix(userName)))
-		}
-
-	}
-}
-
-func (s *Server) Removeuser(user string) {
-	s.mu.Lock()
-	delete(s.Users, user)
-	defer s.mu.Unlock()
-	s.Broadcast <- BroadcastDetails{
-		Notification: "\033[31m" + user + " has left our chat...\033[0m\n",
-	}
+	// Handle the messages for this user
+	s.HandleMessages(conn, userName)
 }
 
 func (s *Server) AddUser(conn net.Conn) (string, error) {
@@ -146,7 +105,6 @@ func (s *Server) AddUser(conn net.Conn) (string, error) {
 				s.mu.Lock()
 				s.Users[name] = conn
 				s.mu.Unlock()
-				fmt.Println("history:", s.HistoryMessages)
 				conn.Write([]byte(strings.Join(s.HistoryMessages, "")))
 				return name, nil
 			}
@@ -159,23 +117,59 @@ func (s *Server) AddUser(conn net.Conn) (string, error) {
 	}
 }
 
+func (s *Server) HandleMessages(conn net.Conn, userName string) {
+	for {
+		if s.Shutdown {
+			conn.Close()
+			break
+		}
+
+		message, err := bufio.NewReader(conn).ReadString('\n')
+		if err != nil {
+			// Log the error
+			s.LogInfo.Println(userName + " has left the chat (EOF)")
+			return
+		}
+		message, err = helpers.ValidMessage(strings.TrimSpace(message))
+		if err == nil && message != "" {
+			s.Broadcast <- BroadcastDetails{
+				Message: helpers.SetPrefix(userName) + message + "\n",
+				User:    userName,
+			}
+		} else if err != nil {
+			conn.Write([]byte(err.Error() + "\n"))
+			conn.Write([]byte(helpers.SetPrefix(userName)))
+		} else {
+			conn.Write([]byte(helpers.SetPrefix(userName)))
+		}
+	}
+}
+
+func (s *Server) Removeuser(user string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Broadcast <- BroadcastDetails{
+		Message: "\033[31m" + user + " has left our chat...\033[0m\n",
+	}
+	s.Users[user].Close()
+	delete(s.Users, user)
+}
+
+
 func (s *Server) brodcast() {
 	for brodcast := range s.Broadcast {
 		s.mu.Lock()
 		for user, conn := range s.Users {
-			if user != brodcast.User && brodcast.Notification == "" {
+			if user != brodcast.User {
 				conn.Write([]byte("\033[s\n\033[F\033[2K\r"))
 				conn.Write([]byte(brodcast.Message))
-			} else if user != brodcast.User {
-				conn.Write([]byte("\033[s\033[F\033[2K\r"))
-				conn.Write([]byte(brodcast.Notification))
 			}
 			conn.Write([]byte(helpers.SetPrefix(user)))
 			if user != brodcast.User {
-				conn.Write([]byte("\033[u\033[2B"))
+				conn.Write([]byte("\033[u\033[B"))
 			}
 		}
-		s.HistoryMessages = append(s.HistoryMessages, brodcast.Message+brodcast.Notification)
+		s.HistoryMessages = append(s.HistoryMessages, brodcast.Message)
 		s.mu.Unlock()
 	}
 }
@@ -184,11 +178,10 @@ func (s *Server) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Shutdown = true
+	close(s.Broadcast)
 	for _, user := range s.Users {
 		user.Write([]byte("\nServer has been stopped.")) // Notify the user
-		user.Close()                                     // Close the connection
 	}
 	s.LogInfo.Println("Server has been stoped")
 	fmt.Println("Server has been stopped.")
-	// Server.Shutdown<-true
 }

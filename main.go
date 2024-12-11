@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"syscall"
 
 	"netcat/internal/chat"
 	"netcat/internal/helpers"
@@ -16,11 +15,12 @@ func main() {
 	port := helpers.HandleArguments()
 	if port == "" {
 		fmt.Println("[USAGE]: ./TCPChat $port")
+		return
 	}
 	server := chat.NewServer()
 
 	stopped := make(chan os.Signal, 1)
-	signal.Notify(stopped, syscall.SIGINT)
+	signal.Notify(stopped, os.Interrupt)
 	go server.Start(port)
 	defer server.Stop()
 	<-stopped
